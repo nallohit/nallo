@@ -1,0 +1,2133 @@
+ private void addtocar() throws SQLException{
+    
+        if(txtProductoV.getText()!= "" && txtCode.getText()!= "" && txtPrecio.getText()!= "" && txtClienteVentas.getText()!=""){
+            if ((int) spCantidad.getValue() > 0) {
+                Connection conn = ConexionMySQL.obtenerConexion();
+                try{
+                    
+                    System.out.println("Conexión establecida.");
+                    PreparedStatement stmt2 =  conn.prepareStatement("SELECT CompradoA FROM inven WHERE Producto = ?");
+                    stmt2.setString(1,txtProductoV.getText());
+                    ResultSet rs2 = stmt2.executeQuery();
+                    rs2.next();
+                    Float precioCompra = rs2.getFloat(1);
+                    stmt2.close();
+                    rs2.close();
+                    
+                    PreparedStatement stmt3 =  conn.prepareStatement("SELECT Descuento FROM inven WHERE Producto = ?");
+                     stmt3.setString(1,txtProductoV.getText());
+                    ResultSet rs3 = stmt3.executeQuery();
+                   
+                    rs3.next();
+                    Float descuento = rs3.getFloat(1);
+                    stmt3.close();
+                    rs3.close();
+                    
+                    PreparedStatement statement = conn.prepareStatement("INSERT INTO carrito (Producto, Codigo, Cantidad, PrecioCompra, Precio, Cliente, Descuento) VALUES (?, ?, ?, ?, ?, ?, Descuento)"+ "ON DUPLICATE KEY UPDATE Cantidad = Cantidad+?");
+                    statement.setString(1, txtProductoV.getText());
+                    statement.setString(2, txtCode.getText());
+                    statement.setInt(3, (int) spCantidad.getValue());
+                    statement.setFloat(4, precioCompra);
+                    statement.setFloat(5, Float.parseFloat(txtPrecio.getText()));
+                    statement.setString(6, txtClienteVentas.getText());
+                    //statement.setFloat(7, descuento);
+                    statement.setInt(7, (int) spCantidad.getValue());
+                    
+                    
+                    int rowsInserted = statement.executeUpdate();
+                    
+                    statement.close();
+                    conn.close();
+                    txtProductoV.setText("");
+                    txtCode.setText("");
+                    spCantidad.setValue(0);
+                    txtPrecio.setText("");
+                    reloadTablaV();
+                    
+                } catch (SQLException ex) {
+                    Logger.getLogger(Index.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }else{
+            
+                JOptionPane.showMessageDialog(null, "No hay "+txtProductoV.getText()+"en existencia", "Alerta", JOptionPane.WARNING_MESSAGE);
+
+            }
+        }
+    }
+
+    private void reloadTablaV() {
+        
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM carrito");
+            DefaultTableModel model = (DefaultTableModel) tblCarritoV.getModel();
+            model.setRowCount(0);
+            float vtotal = 0;
+            float vdesc = 0;
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                String prod = rs.getString("Producto");
+                String cod = rs.getString("Codigo");
+                int can = rs.getInt("Cantidad");
+                //int ven = rs.getInt("Vendidos");
+                //float compA = rs.getFloat("CompradoA");
+                float pre = rs.getFloat("Precio");
+                String cli= rs.getString("Cliente");
+                float desc = rs.getFloat("Descuento");
+                vdesc += desc * can;
+                float subtotal = pre * can;
+                vtotal += subtotal/*(pre * can)*/;
+                
+                
+                Object[] fila={prod, cod, can, pre, subtotal};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            totalGeneral = vtotal;
+            descuentoGeneral = vdesc;
+            NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            String cifraFormateada = nf.format(vtotal);
+            lblTotal.setText(cifraFormateada);
+            String descuentoF = nf.format(vdesc);
+            lblTotal1.setText(descuentoF);
+            String tot = nf.format(vtotal-vdesc);
+            lblTotal2.setText(tot);
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    
+    }
+
+    private void aplicarDescuento() {
+        
+        try (Connection conexion = ConexionMySQL.obtenerConexion()) {
+            PreparedStatement stmt2 =  conexion.prepareStatement("UPDATE carrito c JOIN inven i ON c.Producto = i.Producto SET c.Descuento = i.Descuento WHERE c.Producto = i.Producto");
+            int filasActualizadas = stmt2.executeUpdate();
+            System.out.println("La tabla ha sido actualizada exitosamente. Se actualizaron " + filasActualizadas + " filas.");
+            reloadTablaV();
+            conexion.close();
+        } catch (SQLException ex) {
+            System.out.println("Error al actualizar la tabla: " + ex.getMessage());
+        }
+    }
+
+    private void quitarDescuento() {
+       
+        try (Connection conexion = ConexionMySQL.obtenerConexion()) {
+            PreparedStatement stmt2 =  conexion.prepareStatement("UPDATE carrito c JOIN inven i ON c.Producto = i.Producto SET c.Descuento = 0 WHERE c.Producto = i.Producto");
+            int filasActualizadas = stmt2.executeUpdate();
+            System.out.println("La tabla ha sido actualizada exitosamente. Se actualizaron " + filasActualizadas + " filas.");
+            reloadTablaV();
+            conexion.close();
+        } catch (SQLException ex) {
+            System.out.println("Error al actualizar la tabla: " + ex.getMessage());
+        } 
+    }
+
+    private void confirmVenta(float recibido, float devuelta){
+    
+     
+        String facturaID;
+        int lastId;
+        try (Connection conexion = ConexionMySQL.obtenerConexion()) {
+            
+            Statement stmt2 =  conexion.createStatement();
+            ResultSet rs2 = stmt2.executeQuery("SELECT MAX(ID) FROM idfacturas");
+            rs2.next();
+            lastId = rs2.getInt(1);
+            facturaID = String.format("%010d", lastId + 1);
+            Date fechaActual = new Date(System.currentTimeMillis());
+            
+            // Creamos un objeto Time con la hora actual
+            Time horaActual = new Time(System.currentTimeMillis());
+        
+            String consulta = "INSERT INTO ventasp (Producto, Codigo, Cantidad, PrecioCompra, PrecioVenta, Descuento, Cliente, FacturaID, Fecha, Estado) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            try (PreparedStatement statement = conexion.prepareStatement(consulta)) {
+                try (Statement statementCarrito = conexion.createStatement()) {
+                    
+                  
+                    ResultSet resultado = statementCarrito.executeQuery("SELECT * FROM carrito");
+                    while (resultado.next()) {
+                        int ultimoId;
+                        statement.setString(1, resultado.getString("Producto"));
+                        statement.setString(2, resultado.getString("Codigo"));
+                        statement.setInt(3, resultado.getInt("Cantidad"));
+                        statement.setDouble(4, resultado.getDouble("PrecioCompra"));
+                        statement.setDouble(5, resultado.getDouble("Precio"));
+                        statement.setFloat(6, resultado.getFloat("Descuento"));
+                        
+                        statement.setString(7, txtClienteVentas.getText());
+                        statement.setString(8, facturaID);
+                        statement.setDate(9, fechaActual);
+                        statement.setString(10, "Activas");
+
+                        statement.executeUpdate();
+                        
+                        PreparedStatement actualizacion = conexion.prepareStatement("UPDATE inven SET Cantidad = Cantidad - ?, Vendidos = Vendidos + ? WHERE Producto = ?");
+                        actualizacion.setInt(1, resultado.getInt("Cantidad"));
+                        actualizacion.setFloat(2, resultado.getInt("Cantidad"));
+                      
+                        actualizacion.setString(3, resultado.getString("Producto"));
+
+                        actualizacion.executeUpdate();
+                        
+                        
+                        //printTicket();
+                        //imprimirFactura();
+                        //ok();
+                        reloadTablaV();
+                        
+                    }
+                    
+                      String insertID = "INSERT INTO idfacturas (IdFactura, Cliente, Vendedor, Recibido, Devuelta, Fecha, Hora, Estado) "
+                    + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                    
+                    try (PreparedStatement stmt3 = conexion.prepareStatement(insertID)) {
+                        
+                        stmt3.setString(1, facturaID);
+                        stmt3.setString(2, txtClienteV.getText());
+                        stmt3.setString(3, txtVendedorV.getText());
+                        stmt3.setFloat(4, recibido);
+                        stmt3.setFloat(5, devuelta);
+                        stmt3.setDate(6, fechaActual);
+                        stmt3.setTime(7, horaActual);
+                        stmt3.setString(8, "Activas");
+                        stmt3.executeUpdate();
+                    }
+                    imprimir(facturaID, txtClienteV.getText(), txtVendedorV.getText());
+                    Limpiar();
+                    //setFacturaCliente();
+                    //txtCliente.setText("");
+                    
+                }
+            }
+            
+            conexion.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+    private void imprimir(String facturaID, String cliente, String vendedor) throws SQLException {
+        
+        Date fechaActual = new Date(System.currentTimeMillis());
+            
+        // Creamos un objeto Time con la hora actual
+        Time horaActual = new Time(System.currentTimeMillis());
+        
+        LocalDateTime fechaHoraActual = LocalDateTime.now();
+    
+        // Definir el formato deseado
+        DateTimeFormatter formatoFechaHora = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+        // Formatear la fecha y hora actual con el formato deseado
+        String fechaActual2 = fechaHoraActual.format(formatoFechaHora);
+
+        // Obtener la instancia de PrinterJob
+        PrinterJob job = PrinterJob.getPrinterJob();
+
+        // Crear un objeto PageFormat y Paper
+        PageFormat format = new PageFormat();
+        Paper paper = new Paper();
+
+        // Establecer el tamaño de papel a 80mm de ancho y tamaño variable
+        double paperWidth = 3.14961;
+        double paperHeight = 1000.0;
+        double leftMargin = 0.0;
+        double rightMargin = 0.0;
+        double topMargin = 0.0;
+        double bottomMargin = 0.0;
+        paper.setSize(paperWidth * 72.0, paperHeight);
+        paper.setImageableArea(leftMargin, topMargin, paperWidth * 72.0 - leftMargin - rightMargin, paperHeight - topMargin - bottomMargin);
+        format.setPaper(paper);
+
+        // Crear un Printable que contiene el contenido de la factura
+        Printable printable = new Printable() {
+            @Override
+            public int print(Graphics graphics, PageFormat pageFormat, int pageIndex) throws PrinterException {
+                if (pageIndex != 0) {
+                    return NO_SUCH_PAGE;
+                }
+                int indice =20;
+                Graphics2D g2d = (Graphics2D)graphics;
+                g2d.translate(pageFormat.getImageableX(), pageFormat.getImageableY());
+                Font font = new Font("Arial", Font.PLAIN,8);
+                
+                Font boldFont = font.deriveFont(Font.BOLD);
+                g2d.setFont(boldFont);
+                // Aquí debes agregar el código para dibujar los elementos de la factura
+                g2d.drawString("                        Refricentro El Rubio", 10, indice);indice+=10;
+                //g2d.setFont(font);
+                g2d.drawString("                    Carretera Cabarete Sosúa # 57 ", 0, indice);indice+=10;
+
+                g2d.drawString("                       Próximo al Casino Cabarete", 0, indice);indice+=10;
+                
+                g2d.drawString("                 Tel:809-248-1326, Cel:829-379-5465,", 0, indice);indice+=10;
+                g2d.drawString("Cliente: "+cliente, 10, indice);indice+=10;
+                g2d.drawString("Factura: "+facturaID, 10, indice);indice+=10;
+                g2d.drawString("Fecha y hora: "+fechaActual2 + " "+horaActual, 10, indice);indice+=10;
+                g2d.drawString("--------------------------------------------------------------------", 0, indice);indice+=10;
+                ////g2d.drawString("Producto         Codigo    Cantidad  Precio    Total", 10, indice);indice+=20;
+                
+                String privilegio = "Vendedor";
+                
+                Connection conn = null;
+                PreparedStatement stmt = null;
+                float descuento=0;
+                float subtotal =0;
+                float recibido=0;
+                float devuelta=0;
+                try{conn = ConexionMySQL.obtenerConexion();
+                String sql = "SELECT * FROM ventasp WHERE FacturaID =?";
+                stmt = conn.prepareStatement(sql);
+                stmt.setString(1,facturaID);
+                
+
+                ResultSet rs = stmt.executeQuery();
+                
+                while(rs.next()){
+                
+                    ///g2d.drawString(rs.getString("Producto")+"  "+rs.getString("Codigo")+"      "+rs.getInt("Cantidad")+"        "+rs.getFloat("PrecioVenta")+"    "+rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"), 10, indice);indice+=20;
+                    String producto = rs.getString("Producto");
+                    int maxWidth = 200; // Ancho máximo del papel en píxeles
+                    FontMetrics fm = g2d.getFontMetrics(); // Obtenemos las métricas de la fuente actual
+                   // Posición Y inicial
+                    String[] lines = producto.split("(?<=\\G.{" + (maxWidth/fm.charWidth(' ')) + "})"); // Dividimos el texto en líneas
+                    for (String line : lines) {
+                        g2d.drawString(line.trim(), 10, indice); // Dibujamos cada línea
+                        indice += fm.getHeight(); // Añadimos la altura de la fuente para pasar a la siguiente línea
+                    }
+                    g2d.drawString("Codigo: "+rs.getString("Codigo"), 10, indice);indice+=10;
+                    g2d.drawString("Cantidad: "+String.valueOf(rs.getInt("Cantidad")), 10, indice);indice+=10;
+                    g2d.drawString("Precio: "+String.valueOf(rs.getFloat("PrecioVenta")+"             Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"))), 10, indice);indice+=15;
+                    //g2d.drawString("                                   Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta")), 10, indice);indice+=10;
+                    //g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                    descuento += rs.getFloat("Descuento")*rs.getInt("Cantidad");
+                    subtotal += rs.getFloat("PrecioVenta")*rs.getInt("Cantidad");
+                }
+                if(indice < 150){
+                    indice = 150;
+                
+                }
+                g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                   
+                 PreparedStatement stmt2 = null;
+                String sql2 = "SELECT * FROM idfacturas WHERE IdFactura =?";
+                     stmt2 = conn.prepareStatement(sql2);
+                    stmt2.setString(1,facturaID);
+                
+
+                ResultSet rs2 = stmt2.executeQuery();
+                
+                if(rs2.next()){
+                    recibido = rs2.getFloat("Recibido");
+                    devuelta = rs2.getFloat("Devuelta");
+                    
+                }
+                conn.close();
+                }catch (SQLException e) {
+                    e.printStackTrace();
+                } 
+                
+                //g2d.drawString("Lavadora nedoca  0003      20        20,000    400,000", 10, indice);indice+=20;
+                float total = subtotal - descuento;
+                g2d.drawString("SubTotal: "+ subtotal, 10, indice);indice+=10;
+                g2d.drawString("Descuento: "+ descuento, 10, indice);indice+=10;
+                g2d.drawString("Total: "+ total, 10, indice);indice+=10;
+               g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+               
+                g2d.drawString("Vendedor: "+ vendedor, 10, indice);indice+=10;
+                
+                
+                g2d.drawString("Recibido: "+ recibido, 10, indice);indice+=10;
+                g2d.drawString("Devuelta: " + devuelta, 10, indice);indice+=10;
+                g2d.drawString("                  Gracias por su compra!", 10, indice);indice+=10;
+                indice += 30;
+                g2d.drawString("----------------------------------------------------------------------", 10, indice);indice+=10;
+                return PAGE_EXISTS;
+            }
+        };
+
+        // Asignar el Printable al PrinterJob
+        job.setPrintable(printable, format);
+        
+        // Mostrar la ventana de impresión y esperar a que el usuario imprima la factura
+        if (job.printDialog()) {
+            try {
+                job.print();
+                imprimir2(facturaID, cliente, vendedor);
+            } catch (PrinterException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+
+        
+    }
+    
+    private void imprimir2(String facturaID, String cliente, String vendedor) {
+        
+        Date fechaActual = new Date(System.currentTimeMillis());
+            
+        // Creamos un objeto Time con la hora actual
+        Time horaActual = new Time(System.currentTimeMillis());
+        
+        LocalDateTime fechaHoraActual = LocalDateTime.now();
+    
+        // Definir el formato deseado
+        DateTimeFormatter formatoFechaHora = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+        // Formatear la fecha y hora actual con el formato deseado
+        String fechaActual2 = fechaHoraActual.format(formatoFechaHora);
+
+        // Obtener la instancia de PrinterJob
+        PrinterJob job = PrinterJob.getPrinterJob();
+
+        // Crear un objeto PageFormat y Paper
+        PageFormat format = new PageFormat();
+        Paper paper = new Paper();
+
+        // Establecer el tamaño de papel a 80mm de ancho y tamaño variable
+        double paperWidth = 3.14961;
+        double paperHeight = 1000.0;
+        double leftMargin = 0.0;
+        double rightMargin = 0.0;
+        double topMargin = 0.0;
+        double bottomMargin = 0.0;
+        paper.setSize(paperWidth * 72.0, paperHeight);
+        paper.setImageableArea(leftMargin, topMargin, paperWidth * 72.0 - leftMargin - rightMargin, paperHeight - topMargin - bottomMargin);
+        format.setPaper(paper);
+
+        // Crear un Printable que contiene el contenido de la factura
+        Printable printable = new Printable() {
+            @Override
+            public int print(Graphics graphics, PageFormat pageFormat, int pageIndex) throws PrinterException {
+                if (pageIndex != 0) {
+                    return NO_SUCH_PAGE;
+                }
+                int indice =20;
+                Graphics2D g2d = (Graphics2D)graphics;
+                g2d.translate(pageFormat.getImageableX(), pageFormat.getImageableY());
+                Font font = new Font("Arial", Font.PLAIN,8);
+                
+                Font boldFont = font.deriveFont(Font.BOLD);
+                g2d.setFont(boldFont);
+                // Aquí debes agregar el código para dibujar los elementos de la factura
+                g2d.drawString("                        Refricentro El Rubio", 10, indice);indice+=10;
+                //g2d.setFont(font);
+                g2d.drawString("                    Carretera Cabarete Sosúa # 57 ", 0, indice);indice+=10;
+
+                g2d.drawString("                       Próximo al Casino Cabarete", 0, indice);indice+=10;
+                
+                g2d.drawString("                 Tel:809-248-1326, Cel:829-379-5465,", 0, indice);indice+=10;
+                g2d.drawString("Cliente: "+cliente, 10, indice);indice+=10;
+                g2d.drawString("Factura: "+facturaID, 10, indice);indice+=10;
+                g2d.drawString("Fecha y hora: "+fechaActual2 + " "+horaActual, 10, indice);indice+=10;
+                g2d.drawString("COPIA", 10, indice);indice+=10;
+                g2d.drawString("--------------------------------------------------------------------", 0, indice);indice+=10;
+                ////g2d.drawString("Producto         Codigo    Cantidad  Precio    Total", 10, indice);indice+=20;
+                
+                String privilegio = "Vendedor";
+            
+                Connection conn = null;
+                PreparedStatement stmt = null;
+                float descuento=0;
+                float subtotal =0;
+                float recibido=0;
+                float devuelta=0;
+                try{conn = ConexionMySQL.obtenerConexion();
+                String sql = "SELECT * FROM ventasp WHERE FacturaID =?";
+                stmt = conn.prepareStatement(sql);
+                stmt.setString(1,facturaID);
+                
+
+                ResultSet rs = stmt.executeQuery();
+                
+                while(rs.next()){
+                
+                    ///g2d.drawString(rs.getString("Producto")+"  "+rs.getString("Codigo")+"      "+rs.getInt("Cantidad")+"        "+rs.getFloat("PrecioVenta")+"    "+rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"), 10, indice);indice+=20;
+                    String producto = rs.getString("Producto");
+                    int maxWidth = 200; // Ancho máximo del papel en píxeles
+                    FontMetrics fm = g2d.getFontMetrics(); // Obtenemos las métricas de la fuente actual
+                   // Posición Y inicial
+                    String[] lines = producto.split("(?<=\\G.{" + (maxWidth/fm.charWidth(' ')) + "})"); // Dividimos el texto en líneas
+                    for (String line : lines) {
+                        g2d.drawString(line.trim(), 10, indice); // Dibujamos cada línea
+                        indice += fm.getHeight(); // Añadimos la altura de la fuente para pasar a la siguiente línea
+                    }
+                    g2d.drawString("Codigo: "+rs.getString("Codigo"), 10, indice);indice+=10;
+                    g2d.drawString("Cantidad: "+String.valueOf(rs.getInt("Cantidad")), 10, indice);indice+=10;
+                    g2d.drawString("Precio: "+String.valueOf(rs.getFloat("PrecioVenta")+"             Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"))), 10, indice);indice+=15;
+                    //g2d.drawString("                                   Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta")), 10, indice);indice+=10;
+                    //g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                    descuento += rs.getFloat("Descuento")*rs.getInt("Cantidad");
+                    subtotal += rs.getFloat("PrecioVenta")*rs.getInt("Cantidad");
+                }
+                if(indice < 150){
+                    indice = 150;
+                
+                }
+                g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                   
+                 PreparedStatement stmt2 = null;
+                String sql2 = "SELECT * FROM idfacturas WHERE IdFactura =?";
+                     stmt2 = conn.prepareStatement(sql2);
+                    stmt2.setString(1,facturaID);
+                
+
+                ResultSet rs2 = stmt2.executeQuery();
+                
+                if(rs2.next()){
+                    recibido = rs2.getFloat("Recibido");
+                    devuelta = rs2.getFloat("Devuelta");
+                    
+                }
+                conn.close();
+                }catch (SQLException e) {
+                    e.printStackTrace();
+                } 
+                
+                //g2d.drawString("Lavadora nedoca  0003      20        20,000    400,000", 10, indice);indice+=20;
+                float total = subtotal - descuento;
+                g2d.drawString("SubTotal: "+ subtotal, 10, indice);indice+=10;
+                g2d.drawString("Descuento: "+ descuento, 10, indice);indice+=10;
+                g2d.drawString("Total: "+ total, 10, indice);indice+=10;
+               g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+               
+                g2d.drawString("Vendedor: "+ vendedor, 10, indice);indice+=10;
+                
+                
+                g2d.drawString("Recibido: "+ recibido, 10, indice);indice+=10;
+                g2d.drawString("Devuelta: " + devuelta, 10, indice);indice+=10;
+                g2d.drawString("                  Gracias por su compra!", 10, indice);indice+=10;
+                indice += 30;
+                g2d.drawString("----------------------------------------------------------------------", 10, indice);indice+=10;
+                return PAGE_EXISTS;
+            }
+        };
+
+        // Asignar el Printable al PrinterJob
+        job.setPrintable(printable, format);
+        
+        // Mostrar la ventana de impresión y esperar a que el usuario imprima la factura
+        if (job.printDialog()) {
+            try {
+                job.print();
+                ///imprimir2(facturaID, cliente, vendedor);
+            } catch (PrinterException ex) {
+                ex.printStackTrace();
+            }
+        }
+    
+    
+    }
+
+    private void imprimirV(String facturaID, String cliente, String vendedor, String fecha, Time hora) throws SQLException {
+        
+        //Date fechaActual = new Date(System.currentTimeMillis());
+        //Date fechaActual = fecha;  
+        
+        String[] fechaArrayh = fecha.split("-");
+        String fv = fechaArrayh[2]+"/"+fechaArrayh[1]+"/"+fechaArrayh[0];
+        // Creamos un objeto Time con la hora actual
+        //Time horaActual = new Time(System.currentTimeMillis());
+        Time horaActual = hora;
+        //Date fechaHoraActual = fechaActual;
+    
+        // Definir el formato deseado
+        DateTimeFormatter formatoFechaHora = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+        // Formatear la fecha y hora actual con el formato deseado
+        //Date fechaActual2 = fechaHoraActual.format(formatoFechaHora);
+
+        // Obtener la instancia de PrinterJob
+        PrinterJob job = PrinterJob.getPrinterJob();
+
+        // Crear un objeto PageFormat y Paper
+        PageFormat format = new PageFormat();
+        Paper paper = new Paper();
+
+        // Establecer el tamaño de papel a 80mm de ancho y tamaño variable
+        double paperWidth = 3.14961;
+        double paperHeight = 1000.0;
+        double leftMargin = 0.0;
+        double rightMargin = 0.0;
+        double topMargin = 0.0;
+        double bottomMargin = 0.0;
+        paper.setSize(paperWidth * 72.0, paperHeight);
+        paper.setImageableArea(leftMargin, topMargin, paperWidth * 72.0 - leftMargin - rightMargin, paperHeight - topMargin - bottomMargin);
+        format.setPaper(paper);
+
+        // Crear un Printable que contiene el contenido de la factura
+        Printable printable = new Printable() {
+            @Override
+            public int print(Graphics graphics, PageFormat pageFormat, int pageIndex) throws PrinterException {
+                if (pageIndex != 0) {
+                    return NO_SUCH_PAGE;
+                }
+                int indice =20;
+                Graphics2D g2d = (Graphics2D)graphics;
+                g2d.translate(pageFormat.getImageableX(), pageFormat.getImageableY());
+                Font font = new Font("Arial", Font.PLAIN,8);
+                
+                Font boldFont = font.deriveFont(Font.BOLD);
+                g2d.setFont(boldFont);
+                // Aquí debes agregar el código para dibujar los elementos de la factura
+                g2d.drawString("                        Refricentro El Rubio", 10, indice);indice+=10;
+                //g2d.setFont(font);
+                g2d.drawString("                    Carretera Cabarete Sosúa # 57 ", 0, indice);indice+=10;
+
+                g2d.drawString("                       Próximo al Casino Cabarete", 0, indice);indice+=10;
+                
+                g2d.drawString("                 Tel:809-248-1326, Cel:829-379-5465", 0, indice);indice+=10;
+                g2d.drawString("Cliente: "+cliente, 10, indice);indice+=10;
+                g2d.drawString("Factura: "+facturaID, 10, indice);indice+=10;
+                g2d.drawString("Fecha y hora: "+fv + " "+horaActual, 10, indice);indice+=10;
+                g2d.drawString("COPIA ", 10, indice);indice+=10;
+                g2d.drawString("--------------------------------------------------------------------", 0, indice);indice+=10;
+                ////g2d.drawString("Producto         Codigo    Cantidad  Precio    Total", 10, indice);indice+=20;
+                
+                String privilegio = "Vendedor";
+              
+                Connection conn = null;
+                PreparedStatement stmt = null;
+                float descuento=0;
+                float subtotal =0;
+                float recibido=0;
+                float devuelta=0;
+                try{conn = ConexionMySQL.obtenerConexion();
+                String sql = "SELECT * FROM ventasp WHERE FacturaID =?";
+                stmt = conn.prepareStatement(sql);
+                stmt.setString(1,facturaID);
+                
+
+                ResultSet rs = stmt.executeQuery();
+                
+                while(rs.next()){
+                
+                    ///g2d.drawString(rs.getString("Producto")+"  "+rs.getString("Codigo")+"      "+rs.getInt("Cantidad")+"        "+rs.getFloat("PrecioVenta")+"    "+rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"), 10, indice);indice+=20;
+                    String producto = rs.getString("Producto");
+                    int maxWidth = 200; // Ancho máximo del papel en píxeles
+                    FontMetrics fm = g2d.getFontMetrics(); // Obtenemos las métricas de la fuente actual
+                   // Posición Y inicial
+                    String[] lines = producto.split("(?<=\\G.{" + (maxWidth/fm.charWidth(' ')) + "})"); // Dividimos el texto en líneas
+                    for (String line : lines) {
+                        g2d.drawString(line.trim(), 10, indice); // Dibujamos cada línea
+                        indice += fm.getHeight(); // Añadimos la altura de la fuente para pasar a la siguiente línea
+                    }
+                    g2d.drawString("Codigo: "+rs.getString("Codigo"), 10, indice);indice+=10;
+                    g2d.drawString("Cantidad: "+String.valueOf(rs.getInt("Cantidad")), 10, indice);indice+=10;
+                    g2d.drawString("Precio: "+String.valueOf(rs.getFloat("PrecioVenta")+"             Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta"))), 10, indice);indice+=15;
+                    //g2d.drawString("                                   Total: "+String.valueOf(rs.getInt("Cantidad")*rs.getFloat("PrecioVenta")), 10, indice);indice+=10;
+                    //g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                    descuento += rs.getFloat("Descuento")*rs.getInt("Cantidad");
+                    subtotal += rs.getFloat("PrecioVenta")*rs.getInt("Cantidad");
+                }
+                if(indice < 150){
+                    indice = 150;
+                
+                }
+                g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+                   
+                 PreparedStatement stmt2 = null;
+                String sql2 = "SELECT * FROM idfacturas WHERE IdFactura =?";
+                     stmt2 = conn.prepareStatement(sql2);
+                    stmt2.setString(1,facturaID);
+                
+
+                ResultSet rs2 = stmt2.executeQuery();
+                
+                if(rs2.next()){
+                    recibido = rs2.getFloat("Recibido");
+                    devuelta = rs2.getFloat("Devuelta");
+                    
+                }
+                conn.close();
+                }catch (SQLException e) {
+                    e.printStackTrace();
+                } 
+                
+                //g2d.drawString("Lavadora nedoca  0003      20        20,000    400,000", 10, indice);indice+=20;
+                float total = subtotal - descuento;
+                g2d.drawString("SubTotal: "+ subtotal, 10, indice);indice+=10;
+                g2d.drawString("Descuento: "+ descuento, 10, indice);indice+=10;
+                g2d.drawString("Total: "+ total, 10, indice);indice+=10;
+               g2d.drawString("------------------------------------------------------------------------", 0, indice);indice+=10;
+               
+                g2d.drawString("Vendedor: "+ vendedor, 10, indice);indice+=10;
+                
+                
+                g2d.drawString("Recibido: "+ recibido, 10, indice);indice+=10;
+                g2d.drawString("Devuelta: " + devuelta, 10, indice);indice+=10;
+                g2d.drawString("                  Gracias por su compra!", 10, indice);indice+=10;
+                indice += 30;
+                g2d.drawString("----------------------------------------------------------------------", 10, indice);indice+=10;
+                return PAGE_EXISTS;
+            }
+        };
+
+        // Asignar el Printable al PrinterJob
+        job.setPrintable(printable, format);
+
+        // Mostrar la ventana de impresión y esperar a que el usuario imprima la factura
+        if (job.printDialog()) {
+            try {
+                job.print();
+            } catch (PrinterException ex) {
+                ex.printStackTrace();
+            }
+        }
+
+
+        
+    }
+    private void Limpiar() {
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+
+            // Preparar la sentencia SQL DELETE
+            String sql = "DELETE FROM carrito";
+            stmt = conn.prepareStatement(sql);
+
+            // Establecer el valor del parámetro en el número de fila eliminado
+            //stmt.setString(1, );
+
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            txtClienteV.setText("");
+            reloadTablaV();
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+    }
+
+    private void DeleteFila(String row) {
+        
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+            
+            // Preparar la sentencia SQL DELETE
+            String sql = "DELETE FROM carrito WHERE Producto = ?";
+            stmt = conn.prepareStatement(sql);
+            // Establecer el valor del parámetro en el número de fila eliminado
+            stmt.setString(1, row);
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            
+            reloadTablaV();
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+
+    }
+    
+     private void reloadTablaI(){
+        
+        int agotandose = 0;
+        
+        
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM inven");
+            DefaultTableModel model = (DefaultTableModel) tblArticulosI.getModel();
+            model.setRowCount(0);
+            int totalproductos = 0;
+            float totalventasp = 0;
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                String prod = rs.getString("Producto");
+                String cod = rs.getString("Codigo");
+                int can = rs.getInt("Cantidad");
+                int ven = rs.getInt("Vendidos");
+                float compA = rs.getFloat("CompradoA");
+                float pre = rs.getFloat("Precio");
+                int adv = rs.getInt("Advertencia");
+                int desc = rs.getInt("Descuento");
+                totalproductos += can;
+                float provpre = pre * can;
+                totalventasp += provpre;
+                
+                Object[] fila={prod, cod, can, ven, compA, pre, adv, desc};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+                
+                //txtProducto.setText("");
+                //txtCantidad.setText("");
+                //txtCompradoA.setText("");
+                //txtPrecioVenta.setText("");
+                //txtMinimo.setText("");
+                if(can <= adv){
+                    agotandose += 1;
+                }
+                
+           }
+            DecimalFormat formato = new DecimalFormat("#,###");
+
+            
+            lblTotalProductos.setText(formato.format(totalproductos));
+            lblGananciaEstimada.setText(formato.format(totalventasp));
+            lblPAgotado.setText("Productos agotandose ("+agotandose+")");
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+      
+
+    }
+
+    private void updateAD(String pro, String adv, String desc){
+        
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+
+            // Preparar la sentencia SQL DELETE
+            String sql = "UPDATE inven SET Advertencia = ?, Descuento = ? WHERE Producto = ?";
+            stmt = conn.prepareStatement(sql);
+            stmt.setInt(1, Integer.parseInt(adv));
+            stmt.setFloat(2, Float.parseFloat(desc));
+            stmt.setString(3, pro);
+            
+            // Establecer el valor del parámetro en el número de fila eliminado
+            //stmt.setString(1, );
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            conn.close();
+            reloadTablaI();
+            
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+    
+    }
+    
+    private void reloadTablaFactura() throws SQLException{
+        
+        
+        String item = "";
+        if(itemFact.getSelectedItem().equals("Activas") || itemFact.getSelectedItem().equals("Canceladas")){
+            
+            
+        }
+        try {Connection conn = ConexionMySQL.obtenerConexion();
+            PreparedStatement stmt = null;
+            if(txtFacturaF.getText().isEmpty()){
+               if(itemFact.getSelectedItem().equals("Activas") || itemFact.getSelectedItem().equals("Canceladas")){
+                    item = (String) itemFact.getSelectedItem();
+                    stmt = conn.prepareStatement("SELECT * FROM idfacturas WHERE Estado = ?"); 
+                    stmt.setString(1, item);
+               }else{
+                    stmt = conn.prepareStatement("SELECT * FROM idfacturas"); 
+                    
+               }
+            }else{
+                if(itemFact.getSelectedItem().equals("Activas") || itemFact.getSelectedItem().equals("Canceladas")){
+                    stmt = conn.prepareStatement("SELECT * FROM idfacturas WHERE IdFactura = ? AND Estado = ?"); 
+                    stmt.setString(1,txtFacturaF.getText());
+                    stmt.setString(2,item);
+                }else{
+                    stmt = conn.prepareStatement("SELECT * FROM idfacturas WHERE IdFactura = ?"); 
+                    stmt.setString(1,txtFacturaF.getText());
+                }
+            }
+            ResultSet rs = stmt.executeQuery();
+            DefaultTableModel model = (DefaultTableModel) tblFacturas.getModel();
+            model.setRowCount(0);
+            //double vtotal = 0;
+            
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                String fact = rs.getString("idFactura");
+                String cli = rs.getString("Cliente");
+                String vend = rs.getString("Vendedor");
+                float recib = rs.getFloat("Recibido");
+                float dev = rs.getFloat("Devuelta");
+                
+                String fech2 = rs.getString("Fecha");
+                String hor = rs.getString("Hora");
+                String estado = rs.getString("Estado");
+                
+                ////double subtotal = pre * can;
+                ////vtotal += subtotal/*(pre * can)*/;
+                String[] fechaArray1 = fech2.split("-");
+                String fech = fechaArray1[2]+"/"+fechaArray1[1]+"/"+fechaArray1[0];
+                 PreparedStatement stmt22 = null;
+                 stmt22 = conn.prepareStatement("SELECT * FROM ventasp WHERE FacturaID = ?");
+
+                    stmt22.setString(1, fact);
+                    ResultSet rs22 = stmt22.executeQuery();
+
+
+                 
+                    float vtotal = 0;
+
+                    if (rs22.next()) {
+                        
+                        float pv = rs22.getFloat("PrecioVenta");
+                        int can = rs22.getInt("Cantidad");
+                        float desc = rs22.getFloat("Descuento");
+
+                        vtotal = pv * can;
+                        vtotal -= desc;
+                        // hacer algo con los valores recuperados
+                   }
+                
+                
+                
+                
+                Object[] fila={fact, cli, vend, recib, dev, fech+" "+hor, vtotal, estado};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            ///String cifraFormateada = nf.format(vtotal);
+            ////lblTotal.setText(cifraFormateada);
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void cancelarFactura(String factura) {
+        
+        Connection conn = null;
+        PreparedStatement stmtV = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+
+            // Preparar la sentencia SQL DELETE
+            
+            String consulta = "UPDATE inven i " +
+                              "INNER JOIN ventasp v ON i.Producto = v.Producto " +
+                              "SET i.Cantidad = i.Cantidad + v.Cantidad, " +
+                                  "i.Vendidos = i.Vendidos - v.Cantidad, " +
+                                  "v.Estado = 'Canceladas' " +
+                              "WHERE v.FacturaID = ?";
+            
+            PreparedStatement ps = conn.prepareStatement(consulta);
+            ps.setString(1, factura);
+            int filasActualizadas = ps.executeUpdate();
+            
+            PreparedStatement ps2 = conn.prepareStatement("UPDATE idfacturas SET Estado = ? WHERE IdFactura = ?");
+            ps2.setString(1, "Canceladas");
+            ps2.setString(2, factura);
+            int filasActualizadas2 = ps2.executeUpdate();
+            conn.close();
+            reloadTablaFactura();
+            
+            
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+        
+        
+    }
+    
+    
+    private void loadTablaVentas(){
+        
+        
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            String consu = "SELECT * FROM ventasp WHERE 1 = 1 AND Estado = 'Activas'";
+            //ResultSet rs = stmt.executeQuery("SELECT * FROM ventasp");
+            java.sql.Date fechaDD = null;
+            java.sql.Date fechaHH = null;
+            if(!txtFechaDesdeVentas.getText().isEmpty() && !txtFechaHastaVentas.getText().isEmpty()){
+                String[] fechaArrayd = txtFechaDesdeVentas.getText().split("/");
+                String fd = fechaArrayd[2]+"/"+fechaArrayd[1]+"/"+fechaArrayd[0];
+                
+                String[] fechaArrayh = txtFechaHastaVentas.getText().split("/");
+                String fh = fechaArrayh[2]+"/"+fechaArrayh[1]+"/"+fechaArrayh[0];
+                
+                LocalDate fechad = LocalDate.parse(fd, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+                LocalDate fechah = LocalDate.parse(fh, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+
+                // Crear un objeto java.sql.Date a partir de LocalDate
+                fechaDD = java.sql.Date.valueOf(fechad);
+                fechaHH = java.sql.Date.valueOf(fechah);
+            }
+            
+             String filtros [] = null;
+            
+            // Comprobamos los TextField y agregamos los filtros correspondientes
+            int arrn= 0;
+            if (!txtProductoVentas.getText().isEmpty()) {
+                consu += " AND Producto LIKE ?";
+                //arrn++;
+            }
+            if (!txtCodigoVentas.getText().isEmpty()) {
+                consu += " AND Codigo = ?";
+               
+            }
+            if (!txtClienteVentas.getText().isEmpty()) {
+                consu += " AND Cliente = ?";
+              
+            }
+           
+            if(!txtFechaDesdeVentas.getText().isEmpty() && !txtFechaHastaVentas.getText().isEmpty()){
+                consu += " AND Fecha BETWEEN ? AND ?";
+            }
+            
+            /*/ Si hay filtros, agregamos la cláusula WHERE a la consulta
+            if (filtros != null) {
+                consu += " WHERE " + String.join(" AND ", filtros);
+            }*/
+            PreparedStatement statement = conn.prepareStatement(consu);
+            /**/
+            // Seteamos los valores de los parámetros, si corresponde
+            int indice = 1;
+            if (!txtProductoVentas.getText().isEmpty()) {
+                statement.setString(indice++, "%"+txtProductoVentas.getText()+"%");
+            }
+            if (!txtCodigoVentas.getText().isEmpty()) {
+                statement.setString(indice++, txtCodigoVentas.getText());
+            }
+            if (!txtClienteVentas.getText().isEmpty()) {
+                statement.setString(indice++, txtClienteVentas.getText());
+            }
+            if(!txtFechaDesdeVentas.getText().isEmpty() && !txtFechaHastaVentas.getText().isEmpty()){
+                
+               
+                statement.setDate(indice++, fechaDD);
+               
+                statement.setDate(indice++, fechaHH);
+            }
+            
+            // Ejecutamos la consulta
+            ResultSet rs = statement.executeQuery();
+            
+            
+            DefaultTableModel model = (DefaultTableModel) tblVentas.getModel();
+            model.setRowCount(0);
+            double vtotal = 0;
+            double totall = 0;
+            float totaldesc = 0;
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                String prod = rs.getString("Producto");
+                String cod = rs.getString("Codigo");
+                int can = rs.getInt("Cantidad");
+                //int ven = rs.getInt("Vendidos");
+                //float compA = rs.getFloat("CompradoA");
+                float pre = rs.getFloat("PrecioVenta");
+                float desc = rs.getFloat("Descuento");
+                String cli= rs.getString("Cliente");
+                double subtotal = pre * can;
+                String facturaID = rs.getString("facturaID");
+                vtotal += subtotal/*(pre * can)*/;
+                float totaldesc2 = desc * can;
+                totaldesc += totaldesc2;
+                ///Statement stmtd = conn.createStatement(); 
+                ///ResultSet rsdate = (ResultSet) conn.prepareStatement("SELECT * FROM idfacturas WHERE FacturaID = ?");
+                PreparedStatement stmtd = conn.prepareStatement("SELECT * FROM idfacturas WHERE IdFactura = ?");
+                stmtd.setString(1, facturaID);
+                ResultSet rsdate = stmtd.executeQuery();
+                rsdate.next();
+                String fecha = rsdate.getString("Fecha");
+                String hora=rsdate.getString("Hora");
+                String vendedor = rsdate.getString("Vendedor");
+                String[] fechaArray21 = fecha.split("-");
+                String fecha2 = fechaArray21[2]+"/"+fechaArray21[1]+"/"+fechaArray21[0];
+                
+                Object[] fila={prod, cod, can, pre, subtotal, totaldesc2, facturaID, cli, vendedor, fecha2+" "+ hora};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            String cifraFormateada = nf.format((float) vtotal-totaldesc);
+            lblTotalN.setText(cifraFormateada);
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void completarCompra() {
+      
+     
+    
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM carrocompra");
+            //DefaultTableModel model = (DefaultTableModel) tblArticulos.getModel();
+            ///model.setRowCount(0);
+            while (rs.next()) {
+                //int id = rs.getInt("ID");
+                String prod = rs.getString("Producto");
+               
+                int can = rs.getInt("Cantidad");
+                float pc = rs.getInt("PrecioCompra");
+                float pv = rs.getFloat("PrecioVenta");
+                String v = rs.getString("Vendedor");
+                
+                
+                insercion(prod, can, pc, pv, 0, v);
+                //model.addRow(fila);
+                // hacer algo con los valores recuperados
+                
+                /*txtPro.setText("");
+                txtCantidad.setText("");
+                txtCompradoA.setText("");
+                txtPrecioVenta.setText("");
+                txtMinimo.setText("");?*/
+           }
+            conn.close();
+            
+            limpiarComprar();
+            
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void insercion(String prod, int Can, float compA, float prec, int adv, String v) throws SQLException {
+        String codigo = "";
+        Connection conn = null;
+        try {
+           
+            conn = ConexionMySQL.obtenerConexion();
+            System.out.println("Conexión establecida.");
+
+            // Crear un nuevo PreparedStatement para la inserción o actualización
+            PreparedStatement statement = conn.prepareStatement("INSERT INTO inven (Producto, Codigo, Cantidad, CompradoA, Precio, Advertencia, Descuento) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE Cantidad = Cantidad + ?, Precio = ?, CompradoA = ?");
+            statement.setString(1, prod);
+
+            // Consultar el último ID de la tabla
+            try (Statement stmt2 = conn.createStatement()) {
+                ResultSet rs2 = stmt2.executeQuery("SELECT COALESCE(MAX(ID), 0) AS LastId FROM inven");
+                if (rs2.next()) {
+                    int lastId = rs2.getInt("LastId");
+                    codigo = String.format("%04d", lastId + 1);
+                } else {
+                    codigo = "0001";
+                }
+                rs2.close();
+            }
+
+            statement.setString(2, codigo);
+            statement.setInt(3, Can);
+            statement.setFloat(4, compA);
+            statement.setFloat(5, prec);
+            statement.setInt(6, adv);
+            statement.setInt(7, 0);
+            statement.setInt(8, Can);
+            statement.setFloat(9, prec);
+            statement.setFloat(10, compA);
+
+            int rowsAffected = statement.executeUpdate();
+            statement.close();
+
+            if (rowsAffected > 0) {
+                System.out.println("Producto insertado o actualizado exitosamente");
+                addComprasP(prod, Can, compA, prec, v);
+                reloadTablaComprar();
+            } else {
+                System.out.println("No se realizaron cambios en el producto");
+            }
+            conn.close();
+            
+        } catch (SQLException e) {
+            System.out.println("Error al establecer la conexión: " + e.getMessage());
+        }
+    }
+
+    private void addComprasP(String prod, int can, float Pc, float Pv, String v) {
+        
+        Connection conn = null;
+        Date fechaActual = new Date(System.currentTimeMillis());    
+        try{
+                
+                conn = ConexionMySQL.obtenerConexion();
+                System.out.println("Conexión establecida.");
+                /*Statement stmt2 =  conn.createStatement();
+                
+                ResultSet rs2 = stmt2.executeQuery("SELECT CompradoA FROM inven");
+                rs2.next();
+                Float precioCompra = rs2.getFloat(1);
+                stmt2.close();
+                rs2.close();
+                */
+                PreparedStatement statement = conn.prepareStatement("INSERT INTO comprasp (Producto, Cantidad, PrecioCompra, PrecioVenta, Vendedor, Fecha) VALUES (?, ?, ?, ?, ?, ?)");
+                statement.setString(1, prod);
+                statement.setInt(2, can);
+                statement.setFloat(3, Pc);
+                statement.setFloat(4, Pv);
+                statement.setString(5,v);
+                statement.setDate(6, fechaActual);
+                
+
+                int rowsInserted = statement.executeUpdate();
+
+                statement.close();
+                conn.close();
+           
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+
+    }
+
+    private void reloadTablaComprar() {
+       
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM carrocompra");
+            DefaultTableModel model = (DefaultTableModel) tblCP.getModel();
+            model.setRowCount(0);
+            float total = 0;
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                String prod = rs.getString("Producto");
+                
+                int can = rs.getInt("Cantidad");
+                
+                float pc = rs.getFloat("PrecioCompra");
+                float pv = rs.getFloat("PrecioVenta");
+                String v = rs.getString("Vendedor");
+                
+                total += (pc * can);
+                
+                Object[] fila={prod, can, pc, pv, v};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+                
+                txtProd.setText("");
+                txtCan.setText("");
+                txtPC.setText("");
+                txtPV.setText("");
+                txtV.setText("");
+           }
+            NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            String cifraFormateada = nf.format(total);
+            lblTotalAdd.setText(cifraFormateada);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void limpiarComprar() {
+        
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+
+            // Preparar la sentencia SQL DELETE
+            String sql = "DELETE FROM carrocompra";
+            stmt = conn.prepareStatement(sql);
+
+            // Establecer el valor del parámetro en el número de fila eliminado
+            //stmt.setString(1, );
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            
+            reloadTablaComprar();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+    }
+
+    private void addToCarCompra() {
+        
+        if(txtProd.getText()!= "" && txtCan.getText()!= "" && txtPC.getText()!= "" && txtPC.getText()!= "" && txtV.getText()!= ""){
+            Connection conn = null;
+            try{
+                
+                conn = ConexionMySQL.obtenerConexion();
+                System.out.println("Conexión establecida.");
+                /*Statement stmt2 =  conn.createStatement();
+                
+                ResultSet rs2 = stmt2.executeQuery("SELECT CompradoA FROM inven");
+                rs2.next();
+                Float precioCompra = rs2.getFloat(1);
+                stmt2.close();
+                rs2.close();
+                */
+                PreparedStatement statement = conn.prepareStatement("INSERT INTO carrocompra (Producto, Cantidad, PrecioCompra, PrecioVenta, Vendedor) VALUES (?, ?, ?, ?, ?)"+ "ON DUPLICATE KEY UPDATE Cantidad = Cantidad+?");
+                statement.setString(1, txtProd.getText());
+                statement.setInt(2, Integer.parseInt(txtCan.getText()));
+                statement.setFloat(3, Float.parseFloat(txtPC.getText()));
+                statement.setFloat(4, Float.parseFloat(txtPV.getText()));
+                statement.setString(5,txtV.getText());
+                statement.setInt(6, Integer.parseInt(txtCan.getText()));
+                
+
+                int rowsInserted = statement.executeUpdate();
+
+                statement.close();
+                conn.close();
+                txtProd.setText("");
+                txtCan.setText("");
+                //txtCantidad.setText("");
+                txtPC.setText("");
+                txtPV.setText("");
+                txtV.setText("");
+                reloadTablaComprar();
+                
+            
+            } catch (SQLException ex) {
+            Logger.getLogger(Index.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+    }
+
+    private void mostrarAgotados() {
+       
+        try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM inven WHERE Cantidad <= Advertencia");
+            DefaultTableModel model = (DefaultTableModel) tblAgotados.getModel();
+            model.setRowCount(0);
+            double vtotal = 0;
+            
+            while (rs.next()) {
+                String pro = rs.getString("Producto");
+                String cod = rs.getString("Codigo");
+                int can = rs.getInt("Cantidad");
+                
+                
+                Object[] fila={pro, cod, can};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            /*NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            String cifraFormateada = nf.format(vtotal);
+            lblTotal.setText(cifraFormateada);*/
+          conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private Object[] identificacion(String us, String pas) {
+        
+        boolean existe = false;
+        String privilegio = "Vendedor";
+        String url = "jdbc:mysql://localhost:3306/inventario?";
+        String user = "root";
+        String password = "";
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = DriverManager.getConnection(url, user, password);
+
+            // Preparar la sentencia SQL DELETE
+            String sql = "SELECT * FROM users WHERE User = ? AND Password = ?";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1,us);
+            stmt.setString(2,pas);
+            
+            ResultSet rs = stmt.executeQuery();
+            if(rs.next()){
+                existe = true;
+                privilegio = rs.getString("Privilegio");
+            }
+            
+            // Establecer el valor del parámetro en el número de fila eliminado
+            //stmt.setString(1, );
+
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            
+            
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+        Object[] retorno = {existe, privilegio};
+        return retorno;
+    }
+
+    private void setFacturaVendedor() {
+    
+        
+        String facturaID;
+        int lastId;
+        try (Connection conexion = ConexionMySQL.obtenerConexion()) {
+            
+            Statement stmt2 =  conexion.createStatement();
+            ResultSet rs2 = stmt2.executeQuery("SELECT MAX(ID) FROM idfacturas");
+            rs2.next();
+            lastId = rs2.getInt(1);
+            facturaID = String.format("%010d", lastId + 1);
+            txtFacturaV.setText(facturaID);
+            txtVendedorV.setText(Usuario);
+            if(administrador){
+                txtPrecio.setEditable(true);
+            }else{
+                txtPrecio.setEditable(false);
+            
+            }
+            reloadTablaV();
+            conexion.close();
+        } catch (SQLException ex) {
+            Logger.getLogger(Index.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    
+    }
+
+    private void bus(String text) {
+       
+        try {
+            Connection conn = ConexionMySQL.obtenerConexion();
+            PreparedStatement stmt = null;
+            stmt = conn.prepareStatement("SELECT * FROM inven WHERE Producto LIKE ?");
+            
+            stmt.setString(1,"%"+text+"%");
+            ResultSet rs = stmt.executeQuery();
+            
+            
+            DefaultTableModel model = (DefaultTableModel) tblBuscar.getModel();
+            model.setRowCount(0);
+            double vtotal = 0;
+            
+            while (rs.next()) {
+                
+                String prod = rs.getString("Producto");
+                String cod = rs.getString("Codigo");
+                int can = rs.getInt("Cantidad");
+                int preci = rs.getInt("Precio");
+                
+                Object[] fila={prod, cod, can, preci};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            conn.close();
+            stmt.close();
+            rs.close();
+          
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void searchCode(String code) {
+        throw new UnsupportedOperationException("Not supported yet."); // Generated from nbfs://nbhost/SystemFileSystem/Templates/Classes/Code/GeneratedMethodBody
+    }
+
+    private void cambiarContra() throws SQLException {
+        String us = txtUssChange.getText();
+        String ps = txtPssChange.getText();
+        if(!ps.isEmpty()){
+            try{
+             
+                Connection conn = ConexionMySQL.obtenerConexion();
+                String sql = "UPDATE users SET Password = ? WHERE User = ?";
+                PreparedStatement statement = conn.prepareStatement(sql);
+                statement.setString(1, ps);
+                statement.setString(2, us);
+
+
+                // Ejecutar la consulta SQL preparada
+                int filasActualizadas = statement.executeUpdate();
+                System.out.println(filasActualizadas + " filas actualizadas.");
+                
+                conn.close();
+                
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+            txtPssChange.setText("");
+        }
+    }
+
+    private void reloadTablaUsers() {
+       
+         try (Connection conn = ConexionMySQL.obtenerConexion();
+            Statement stmt = conn.createStatement()) {
+            ResultSet rs = stmt.executeQuery("SELECT * FROM users");
+            DefaultTableModel model = (DefaultTableModel) tblUsers.getModel();
+            model.setRowCount(0);
+            double vtotal = 0;
+            
+            while (rs.next()) {
+                String us = rs.getString("User");
+                String pss = rs.getString("Password");
+                String passE = Base64.getEncoder().encodeToString(pss.getBytes());
+                String priv = rs.getString("Privilegio");
+                
+                Object[] fila={us, passE, priv};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            /*NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            String cifraFormateada = nf.format(vtotal);
+            lblTotal.setText(cifraFormateada);*/
+            txtCU.setText("");
+            txtCP.setText("");
+            itemCPV.setSelectedItem("Vendedor");
+            conn.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void updateUser() {
+    
+         Connection conn = null;
+        if(!txtCU.getText().isEmpty() && !txtCP.getText().isEmpty()){
+            String cu = txtCU.getText();
+            String cp = txtCP.getText();
+            String cpv = (String) itemCPV.getSelectedItem();
+            try{
+                
+                conn = ConexionMySQL.obtenerConexion();
+
+                PreparedStatement statement = conn.prepareStatement("INSERT INTO users (User, Password, Privilegio) VALUES (?, ?, ?)"+ "ON DUPLICATE KEY UPDATE Password = ?, Privilegio = ?");
+
+                statement.setString(1, cu);
+                statement.setString(2, cp);
+                statement.setString(3, cpv);
+                statement.setString(4, cp);
+                statement.setString(5, cpv);
+                
+                int rowsInserted = statement.executeUpdate();
+                reloadTablaUsers();
+               
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
+        }         
+    }
+
+    private void ajustarUsuario() {
+    
+        int row = tblUsers.getSelectedRow();
+        
+            
+        DefaultTableModel model = (DefaultTableModel) tblUsers.getModel();
+         //model.removeRow(row);
+        String us = tblUsers.getValueAt(row, 0).toString();
+        //String  pass = tblUsers.getValueAt(row, 1).toString();
+        //String passE = Base64.getEncoder().encodeToString(pass.getBytes());
+        
+        String pri = tblUsers.getValueAt(row, 2).toString();
+        
+        
+        txtCU.setText(us);
+        txtCP.setText("");
+        itemCPV.setSelectedItem(pri);
+    }
+
+    private void userSetting() {
+        dialogUser.setVisible(true);
+    }
+
+    private void cargarGastos() {
+        
+         try {
+                Connection conn = ConexionMySQL.obtenerConexion();
+            PreparedStatement stmt = conn.prepareStatement("SELECT * FROM gastos WHERE Fecha BETWEEN ? AND ?");
+            
+            String[] fechaArrayd = txtFechaDC.getText().split("/");
+            String fd = fechaArrayd[2]+"/"+fechaArrayd[1]+"/"+fechaArrayd[0];
+            String[] fechaArrayh = txtFechaHC.getText().split("/");
+            String fh = fechaArrayh[2]+"/"+fechaArrayh[1]+"/"+fechaArrayh[0];
+            
+            LocalDate fechad = LocalDate.parse(fd, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+            LocalDate fechah = LocalDate.parse(fh, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+
+            // Crear un objeto java.sql.Date a partir de LocalDate
+            java.sql.Date fechaDD = java.sql.Date.valueOf(fechad);
+            java.sql.Date fechaHH = java.sql.Date.valueOf(fechah);
+            
+            stmt.setDate(1, fechaDD);
+            stmt.setDate(2,fechaHH);
+            
+            ResultSet rs = stmt.executeQuery();
+            
+            DefaultTableModel model = (DefaultTableModel) tblGastos.getModel();
+            model.setRowCount(0);
+            //double vtotal = 0;
+            float g1 = 0 ,g2 = 0, g3 = 0, g4 = 0 , g5 = 0, t = 0;
+            while (rs.next()) {
+                int id = rs.getInt("ID");
+                g1 += rs.getFloat("Gasto1");
+                g2 += rs.getFloat("Gasto2");
+                g3 += rs.getFloat("Gasto3");
+                g4 += rs.getFloat("Gasto4");
+                g5 += rs.getFloat("Gasto5");
+                String f = rs.getString("Fecha");
+                
+                ////double subtotal = pre * can;
+                ////vtotal += subtotal/*(pre * can)*/;
+                t = g1 + g2 + g3 + g4 + g5;
+                
+                
+                
+                
+                // hacer algo con los valores recuperados
+           }
+            totalGas=t;
+            mostrarGanancias();
+            Object[] fila={g1, g2, g3, g4, g5, t};
+            model.addRow(fila);
+            NumberFormat nf = NumberFormat.getInstance(); // crear instancia de NumberFormat
+            ///String cifraFormateada = nf.format(vtotal);
+            ////lblTotal.setText(cifraFormateada);
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void calcularProductos() {
+       
+        float productosComprados=0;
+        float inversionesProductos=0;
+        float productosVendidos=0;
+        float gananciasProductos=0;
+        try {
+            // Establecer la conexión a la base de datos
+            String[] fechaArrayd = txtFechaDC.getText().split("/");
+            String fd = fechaArrayd[2]+"/"+fechaArrayd[1]+"/"+fechaArrayd[0];
+            String[] fechaArrayh = txtFechaHC.getText().split("/");
+            String fh = fechaArrayh[2]+"/"+fechaArrayh[1]+"/"+fechaArrayh[0];
+            LocalDate fechad = LocalDate.parse(fd, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+            LocalDate fechah = LocalDate.parse(fh, DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+
+            // Crear un objeto java.sql.Date a partir de LocalDate
+            java.sql.Date fechaDD = java.sql.Date.valueOf(fechad);
+            java.sql.Date fechaHH = java.sql.Date.valueOf(fechah);
+            
+            DefaultTableModel model = (DefaultTableModel) tblProductosC.getModel();
+            model.setRowCount(0);
+            
+           
+            
+            Connection conexion = ConexionMySQL.obtenerConexion();
+
+            // Crear la consulta SQL con dos cláusulas JOIN
+            String query = "SELECT * FROM  idfacturas WHERE Fecha BETWEEN ? AND ? AND Estado = 'Activas'";
+
+            // Crear un objeto Statement y ejecutar la consulta
+            PreparedStatement statement = conexion.prepareStatement(query);
+            statement.setDate(1,fechaDD);
+            statement.setDate(2,fechaHH);
+            ResultSet resultados = statement.executeQuery();
+
+            // Procesar los resultados de la consulta
+            while (resultados.next()) {
+                // Leer los datos de las tres tablas
+                int id = resultados.getInt("ID");
+                
+                String query2 = "SELECT * FROM  ventasp WHERE FacturaID = ?";
+
+                // Crear un objeto Statement y ejecutar la consulta
+                PreparedStatement statement2 =conexion.prepareStatement(query2);
+                statement2.setString(1, resultados.getString("idFactura"));
+                
+                ResultSet resultados2 = statement2.executeQuery();
+                float sto=0;
+                int candd = 0;
+                // Procesar los resultados de la consulta
+                while (resultados2.next()) {
+                    int cantidad = resultados2.getInt("Cantidad");
+                    float prec = resultados2.getFloat("PrecioCompra");
+                    float prev = resultados2.getFloat("PrecioVenta");
+                    sto += prev - prec;
+                    //sto = sto * cantidad;
+                    candd += cantidad;
+                }
+                productosVendidos += candd;
+                gananciasProductos += sto;
+                
+            }
+            // Cerrar la conexión y liberar recursos
+            resultados.close();
+            statement.close();
+            String query3 = "SELECT * FROM  comprasp WHERE Fecha BETWEEN ? AND ?";
+
+                // Crear un objeto Statement y ejecutar la consulta
+                PreparedStatement statement3 =conexion.prepareStatement(query3);
+                statement3.setDate(1,fechaDD);
+                statement3.setDate(2,fechaHH);
+                ResultSet resultados3 = statement3.executeQuery();
+                float stoc=0;
+                int canddc = 0;
+                // Procesar los resultados de la consulta
+                while (resultados3.next()) {
+                    int can = resultados3.getInt("Cantidad");
+                    float pc = resultados3.getFloat("PrecioCompra");
+                    canddc += can;
+                    stoc += pc*can;
+                }
+                productosComprados = canddc;
+                inversionesProductos = stoc;
+                DecimalFormat decimalFormat = new DecimalFormat("#,###");
+                ///String formattedNumber = decimalFormat.format(number);
+                Object[] fila={productosComprados, inversionesProductos, productosVendidos, gananciasProductos};
+                model.addRow(fila);
+                totalGan = gananciasProductos;
+                mostrarGanancias();
+            conexion.close();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private void mostrarGanancias() {
+        
+        float gann = totalGan - totalGas;
+        NumberFormat nf = NumberFormat.getInstance(); 
+        String cifraFormateada = nf.format(gann);
+        
+        if(gann < 0){
+            lblTotalG.setForeground(Color.RED);
+            
+        }else{
+        
+            lblTotalG.setForeground(Color.BLACK);
+        }
+        lblTotalG.setText(cifraFormateada);
+    }
+    
+    private void addWaste() throws SQLException{
+        
+        // Establecer conexión con la base de datos
+        // Obtener el valor del campo de texto
+        try{
+            String[] fechaArray = txtFecha.getText().split("/");
+            String f = fechaArray[2]+"/"+fechaArray[1]+"/"+fechaArray[0];
+            String fechaTexto = f;
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd");
+            String pen = txtpen.getText();
+            String pr = txtpr.getText();
+            String pl = txtpl.getText();
+            String ps = txtps.getText();
+            String po = txtpo.getText();
+   
+   
+            // Convertir la cadena de fecha en un objeto LocalDate
+            LocalDate fecha = LocalDate.parse(fechaTexto, formatter);
+
+            // Obtener el mes y el año de la fecha
+            int mes = fecha.getMonthValue();
+            int anio = fecha.getYear();
+
+            ///LocalDate fechaadd = LocalDate.parse(txtFecha.getText(), DateTimeFormatter.ofPattern("yyyy/MM/dd"));
+
+                // Crear un objeto java.sql.Date a partir de LocalDate
+            java.sql.Date fechaAdd = java.sql.Date.valueOf(fecha);
+
+
+            // Verificar si ya existe un registro con la fecha específica en la tabla
+            try (Connection con = ConexionMySQL.obtenerConexion()) {
+                // Verificar si ya existe un registro con la fecha específica en la tabla
+                String query = "SELECT COUNT(*) FROM gastos WHERE YEAR(Fecha) = ? AND MONTH(Fecha) = ?";
+                PreparedStatement pstmt = con.prepareStatement(query);
+                pstmt.setInt(1, anio); // año específico que quieres comprobar
+                pstmt.setInt(2, mes); // mes específico que quieres comprobar (abril)
+                ResultSet rs = pstmt.executeQuery();
+                
+                // Obtener el resultado de la consulta
+                rs.next();
+                int count = rs.getInt(1);
+                
+                // Si no hay registros con ese mes y año, realizar la inserción de los datos
+                if (count == 0) {
+                    String insertQuery = "INSERT INTO gastos (Gasto1, Gasto2, Gasto3, Gasto4, Gasto5, Fecha) VALUES (?, ?, ?, ?, ?, ?)";
+                    PreparedStatement insertStmt = con.prepareStatement(insertQuery);
+                    insertStmt.setFloat(1, Float.parseFloat(pen));
+                    insertStmt.setFloat(2, Float.parseFloat(pr));
+                    insertStmt.setFloat(3, Float.parseFloat(pl));
+                    insertStmt.setFloat(4, Float.parseFloat(ps));
+                    insertStmt.setFloat(5, Float.parseFloat(po));
+                    insertStmt.setDate(6, fechaAdd);
+                    insertStmt.executeUpdate();
+                }else{
+                    String insertQuery = "UPDATE gastos SET Gasto1=?, Gasto2=?, Gasto3=?, Gasto4=?, Gasto5=?, Fecha=? WHERE MONTH(Fecha) = ? AND YEAR(Fecha) = ?";
+                    PreparedStatement insertStmt = con.prepareStatement(insertQuery);
+                    insertStmt.setFloat(1, Float.parseFloat(pen));
+                    insertStmt.setFloat(2, Float.parseFloat(pr));
+                    insertStmt.setFloat(3, Float.parseFloat(pl));
+                    insertStmt.setFloat(4, Float.parseFloat(ps));
+                    insertStmt.setFloat(5, Float.parseFloat(po));
+                    insertStmt.setDate(6, fechaAdd);
+                    insertStmt.setInt(7, mes);
+                    insertStmt.setInt(8, anio);
+                    
+                    
+                    insertStmt.executeUpdate();
+                
+                
+                }
+                txtpen.setText("");
+                txtpr.setText("");
+                txtpl.setText("");
+                txtps.setText("");
+                txtpo.setText("");
+                txtFecha.setText("");
+                    // Cerrar la conexión y liberar recursos
+                rs.close();
+                pstmt.close();
+                con.close();
+                cargarGastos();
+                
+            }catch (SQLException e) {
+                e.printStackTrace();
+            }
+        } catch (DateTimeParseException e) {
+            System.err.println("Error al parsear la fecha: " + e.getMessage());
+        }
+        
+        
+
+        
+    }
+    private void mostrarCompras(String fecha1, String fecha2) {
+     
+    
+        try {
+            Connection conn = ConexionMySQL.obtenerConexion();
+            PreparedStatement stmt = null;
+            stmt = conn.prepareStatement("SELECT * FROM comprasp WHERE Fecha BETWEEN ? AND ?");
+            String[] fechaArray1 = fecha1.split("/");
+            String fechad = fechaArray1[2]+"/"+fechaArray1[1]+"/"+fechaArray1[0];
+            String[] fechaArray2 = fecha2.split("/");
+            String fechah = fechaArray2[2]+"/"+fechaArray2[1]+"/"+fechaArray2[0];
+            
+            
+            stmt.setString(1,fechad);
+            stmt.setString(2,fechah);
+            
+            ResultSet rs = stmt.executeQuery();
+            
+            
+            DefaultTableModel model = (DefaultTableModel) tblComprasRealizadas.getModel();
+            model.setRowCount(0);
+            double vtotal = 0;
+            
+            while (rs.next()) {
+                String prod = rs.getString("Producto");
+                PreparedStatement stmt1 = null;
+                stmt1 = conn.prepareStatement("SELECT * FROM inven WHERE Producto = ?");
+                
+                stmt1.setString(1, prod);
+
+                ResultSet rs1 = stmt1.executeQuery();
+
+                int vendi =0;
+                
+                if(rs1.next()) {
+                
+                    vendi = rs1.getInt("Vendidos");
+                }
+                
+                stmt1.close();
+                rs1.close();
+                
+                int can = rs.getInt("Cantidad");
+                
+                float pc = rs.getFloat("PrecioCompra");
+                float pv = rs.getFloat("PrecioVenta");
+                String v = rs.getString("Vendedor");
+               
+                
+                Object[] fila={prod, can, vendi, pc, pv, v};
+                model.addRow(fila);
+                // hacer algo con los valores recuperados
+           }
+            conn.close();
+            stmt.close();
+            rs.close();
+          
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
+    
+    
+    }
+    
+    private void actualizarCompra(){
+        if(txtCPr.getText()!= "" && txtCC.getText()!= "" && txtHiddenCan.getText()!= "" && txtCPC.getText()!= "" && txtCV.getText()!= ""){
+        
+            String pro=txtCPr.getText();
+            String can=txtCC.getText();
+            
+            String hcan=txtHiddenCan.getText();
+            String pc=txtCPC.getText();
+            String pv=txtCPV.getText();
+            String v=txtCV.getText();
+            String id = txtCId.getText();
+            String hpro = txtHiddenPro.getText();
+            
+            Connection conn = null;
+            PreparedStatement stmt = null;
+            try {
+                // Establecer la conexión con la base de datos
+                conn = ConexionMySQL.obtenerConexion();
+
+                
+                
+                /*PreparedStatement stmt12 = null;
+        
+        
+                stmt12 = conn.prepareStatement("SELECT * FROM comprasp WHERE Fecha BETWEEN ? AND ?");
+                
+                //stmt12.setInt(3, row);
+
+                ResultSet rs12= stmt12.executeQuery();
+
+
+
+                
+                while (rs12.next()) {
+                
+                
+                }*/
+                
+                
+                
+                // Preparar la sentencia SQL DELETE
+                String sql = "UPDATE inven SET Producto = ?, Cantidad = Cantidad - ? + ?, CompradoA = ?, Precio = ? WHERE Producto = ?";
+                stmt = conn.prepareStatement(sql);
+                stmt.setString(1, pro);
+                stmt.setInt(2, Integer.parseInt(hcan));
+                stmt.setInt(3, Integer.parseInt(can));
+                stmt.setFloat(4, Float.parseFloat(pc));
+                stmt.setFloat(5, Float.parseFloat(pv));
+                //stmt.setString(5, v);
+                stmt.setString(6, hpro);
+                
+                
+                
+                
+
+                // Establecer el valor del parámetro en el número de fila eliminado
+                //stmt.setString(1, );
+                // Ejecutar la sentencia SQL DELETE
+                stmt.executeUpdate();
+                
+                
+                //System.out.println("Conexión establecida.");
+                /*Statement stmt2 =  conn.createStatement();
+                
+                ResultSet rs2 = stmt2.executeQuery("SELECT CompradoA FROM inven");
+                rs2.next();
+                Float precioCompra = rs2.getFloat(1);
+                stmt2.close();
+                rs2.close();
+                */
+                String sql2 = "UPDATE comprasp SET Producto = ?, Cantidad = ?, PrecioCompra = ?, PrecioVenta = ?, Vendedor = ? WHERE ID = ?";
+                PreparedStatement stmt2 = conn.prepareStatement(sql2);
+                //stmt2.setInt(1, Integer.parseInt(hcan));
+                stmt2.setString(1, pro);
+                stmt2.setInt(2, Integer.parseInt(can));
+                stmt2.setFloat(3, Float.parseFloat(pc));
+                stmt2.setFloat(4, Float.parseFloat(pv));
+                stmt2.setString(5, v);
+                stmt2.setInt(6, Integer.parseInt(id));
+
+                stmt2.executeUpdate();
+
+                stmt2.close();
+                conn.close();
+                txtCPr.setText("");
+                txtCC.setText("");
+                txtCPC.setText("");
+                txtCPV.setText("");
+                txtCV.setText("");
+                txtHiddenCan.setText("");
+
+                reloadTablaI();
+                mostrarCompras(txtFecha1C.getText(), txtFecha2C.getText());
+            } catch (SQLException e) {
+                e.printStackTrace();
+            } 
+        }
+    
+    }
+    
+    private void corregirCompra() throws SQLException {
+       
+        int row = tblComprasRealizadas.getSelectedRow();
+        
+            
+        DefaultTableModel model = (DefaultTableModel) tblComprasRealizadas.getModel();
+         //model.removeRow(row);
+        String prod = tblComprasRealizadas.getValueAt(row, 0).toString();
+        String  can = tblComprasRealizadas.getValueAt(row, 1).toString();
+        String ven = tblComprasRealizadas.getValueAt(row, 2).toString();
+        String pc = tblComprasRealizadas.getValueAt(row, 3).toString();
+        String pv = tblComprasRealizadas.getValueAt(row, 4).toString();
+        String v = tblComprasRealizadas.getValueAt(row, 5).toString();
+        int vendidos=Integer.parseInt(ven);
+        txtCPr.setText(prod);
+        if(vendidos == 0){
+            txtCPr.setEditable(true);
+        }else{txtCPr.setEditable(false);}
+        txtCC.setText(can);
+        txtCPC.setText(pc);
+        txtCPV.setText(pv);
+        txtCV.setText(v);
+        txtHiddenCan.setText(can);
+        txtHiddenPro.setText(prod);
+        
+        
+    
+        try {
+            Connection conn = ConexionMySQL.obtenerConexion();
+            PreparedStatement stmt12 = null;
+        
+        
+            stmt12 = conn.prepareStatement("SELECT * FROM comprasp WHERE Fecha BETWEEN ? AND ?");
+            String[] fechaArray1 = txtFecha1C.getText().split("/");
+            String fechad = fechaArray1[2]+"/"+fechaArray1[1]+"/"+fechaArray1[0];
+            
+            String[] fechaArray2 = txtFecha2C.getText().split("/");
+            
+            String fechah = fechaArray2[2]+"/"+fechaArray2[1]+"/"+fechaArray2[0];
+            
+            stmt12.setString(1, fechad);
+            stmt12.setString(2, fechah);
+            //stmt12.setInt(3, row);
+            
+            ResultSet rs12= stmt12.executeQuery();
+            
+            
+            
+            double vtotal = 0;
+            int limit =0;
+            while (rs12.next()) {
+                if(limit == row){
+                    txtCId.setText(Integer.toString(rs12.getInt("ID")));
+                }
+                limit++;
+            }
+            conn.close();
+            stmt12.close();
+            rs12.close();
+        
+        }catch (SQLException e) {
+            e.printStackTrace();
+        }
+        
+        ///System.out.println(nombre);
+
+            // Actualizar la vista del JTable
+            //tblCarrito.revalidate();
+        ////DeleteFila(nombre);
+        
+    }
+
+    private void setFechaContabilidad() {
+        
+        // Obtener la fecha actual
+        LocalDate fechaActual = LocalDate.now();
+        // Obtener el primer día del mes
+        LocalDate primerDiaMes = fechaActual.withDayOfMonth(1);
+        
+        // Formatear las fechas en el formato dd/mm/aaaa
+        DateTimeFormatter formato = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        String fechaActualr = fechaActual.format(formato);
+        String primerDia = primerDiaMes.format(formato);
+        
+        txtFechaDC.setText(primerDia);
+        txtFechaHC.setText(fechaActualr);
+        
+        cargarGastos();
+        calcularProductos();
+        mostrarGanancias();
+        
+    }
+    
+    private void setFechaVentas() {
+        
+        // Obtener la fecha actual
+        LocalDate fechaActual = LocalDate.now();
+        // Obtener el primer día del mes
+        // Formatear las fechas en el formato dd/mm/aaaa
+        DateTimeFormatter formato = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        
+        String fechaActualr = fechaActual.format(formato);
+       
+        txtFechaDesdeVentas.setText(fechaActualr);
+        txtFechaHastaVentas.setText(fechaActualr);
+        
+        loadTablaVentas();
+        
+    }
+
+    private void DeleteFilaCom(String row) {
+       
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        try {
+            // Establecer la conexión con la base de datos
+            conn = ConexionMySQL.obtenerConexion();
+
+            // Preparar la sentencia SQL DELETE
+            String sql = "DELETE FROM carrocompra WHERE Producto = ?";
+            stmt = conn.prepareStatement(sql);
+
+            // Establecer el valor del parámetro en el número de fila eliminado
+            stmt.setString(1, row);
+
+            // Ejecutar la sentencia SQL DELETE
+            stmt.executeUpdate();
+            
+            reloadTablaComprar();
+        } catch (SQLException e) {
+            e.printStackTrace();
+        } 
+    }
+    
+    private void searchCodeP(String code) {
+    
+        Connection conn = null;
+        try {
+            
+            conn = ConexionMySQL.obtenerConexion();
+            System.out.println("Conexión establecida.");
+            String sql;
+            PreparedStatement stmt = null;
+            
+      
+            sql ="SELECT * FROM inven WHERE Codigo = ?";
+            stmt = conn.prepareStatement(sql);
+            stmt.setString(1, code);
+            
+            ResultSet rs = stmt.executeQuery();
+            int num_filas = 0;
+            if(rs.next()) {
+                //num_filas++;
+                // hacer algo con los valores recuperados
+                System.out.println("Producto encontrado.");
+                txtProd.setText(rs.getString("Producto"));
+                
+                //spCantidad.set("1");
+                txtCan.setText("1");
+                txtPC.setText(rs.getString("CompradoA"));
+                txtPV.setText(rs.getString("Precio"));
+                
+
+                //tranferencia();
+            }
+            stmt.close();
+            rs.close();
+            
+        } catch (SQLException ex) {
+            Logger.getLogger(Index.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
